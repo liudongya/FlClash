@@ -263,6 +263,7 @@ enum DashboardWidget {
     GridItem(crossAxisCellCount: 4, child: SystemProxyButton()),
     platforms: desktopPlatforms,
   ),
+  scriptButton(GridItem(crossAxisCellCount: 4, child: ScriptButton())),
   intranetIp(GridItem(crossAxisCellCount: 4, child: IntranetIP())),
   memoryInfo(GridItem(crossAxisCellCount: 4, child: MemoryInfo()));
 

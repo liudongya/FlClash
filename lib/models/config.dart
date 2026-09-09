@@ -44,16 +44,21 @@ const List<DashboardWidget> defaultDashboardWidgets = [
   DashboardWidget.networkDetection,
   DashboardWidget.trafficUsage,
   DashboardWidget.intranetIp,
+  DashboardWidget.scriptButton,
 ];
 
 List<DashboardWidget> dashboardWidgetsSafeFormJson(
   List<dynamic>? dashboardWidgets,
 ) {
   try {
-    return dashboardWidgets
+    final list = dashboardWidgets
             ?.map((e) => $enumDecode(_$DashboardWidgetEnumMap, e))
             .toList() ??
         defaultDashboardWidgets;
+    if (list.length == 7 && !list.contains(DashboardWidget.scriptButton)) {
+      list.add(DashboardWidget.scriptButton);
+    }
+    return list;
   } catch (_) {
     return defaultDashboardWidgets;
   }
