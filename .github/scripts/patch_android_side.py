@@ -36,7 +36,7 @@ def main() -> None:
     replace_exact(
         root / 'android/common/src/main/res/values/strings.xml',
         '<string name="app_name">FlClash</string>',
-        '<string name="app_name">FlClash Side</string>',
+        '<string name="app_name">FlClash+</string>',
     )
     # This independently installed Android flavor starts without the first-run
     # disclaimer screen. Leave the statement accessible in Tools, and do not
