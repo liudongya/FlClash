@@ -3,7 +3,7 @@
 本仓库的 `Android side-by-side release` 工作流每天检查上游 `chen08209/FlClash` 最新稳定 GitHub Release，也支持 Actions 页面手动运行。构建时使用上游正式 tag 的源代码。
 
 - Android 安装包名：`app.routelight.mobile`（不含用户名或 clash）
-- 手机桌面名称：`FlClash Side`
+- 手机桌面名称：`FlClash+`
 - 应用内“检查更新”和“下载新版”：`https://github.com/liudongya/FlClash/releases/latest`
 - 目标：Android ARM64 APK；未来版本发布在本仓库 Releases，已发布的版本跳过
 - Kotlin namespace、类名和 Dart/Android 通信通道继续使用原始内部标识，以避免运行异常；不影响安装包名
