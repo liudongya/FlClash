@@ -20,7 +20,8 @@ permissions:
 
 concurrency:
   group: android-side-release
-  cancel-in-progress: false
+  # Only the most recent recipe build should run; replace older work automatically.
+  cancel-in-progress: true
 
 jobs:
   android:
