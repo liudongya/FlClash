@@ -136,8 +136,39 @@ jobs:
           set -euo pipefail
           printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
           chmod 600 android/app/keystore.jks
+
+          # GitHub Secret KEY_ALIAS may differ from the alias inside the uploaded
+          # keystore. Detect its actual private-key entries to avoid late Gradle
+          # packaging failures. Never print passwords, aliases or key contents.
+          listing="$(LC_ALL=C keytool -list -v \
+            -keystore android/app/keystore.jks -storepass:env STORE_PASSWORD)"
+          aliases="$(printf '%s\n' "$listing" | awk '
+            /^Alias name: / { alias = substr($0, 13) }
+            /^Entry type: PrivateKeyEntry/ { print alias }
+          ')"
+          if [[ -z "$aliases" ]]; then
+            echo "Keystore contains no PrivateKeyEntry. Generate/upload a signing keystore." >&2
+            exit 1
+          fi
+          mapfile -t private_aliases <<< "$aliases"
+          if [[ "${#private_aliases[@]}" -eq 1 ]]; then
+            selected_alias="${private_aliases[0]}"
+          else
+            selected_alias=""
+            for candidate in "${private_aliases[@]}"; do
+              if [[ "$candidate" == "$KEY_ALIAS" ]]; then
+                selected_alias="$candidate"
+                break
+              fi
+            done
+            if [[ -z "$selected_alias" ]]; then
+              echo "Multiple signing keys found: set KEY_ALIAS to one of the existing private-key aliases." >&2
+              exit 1
+            fi
+          fi
+          echo "Signing keystore verified; using its private key alias."
           {
-            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyAlias=%s\n' "$selected_alias"
             printf 'storePassword=%s\n' "$STORE_PASSWORD"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
           } >> android/local.properties
