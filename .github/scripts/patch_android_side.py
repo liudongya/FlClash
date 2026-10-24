@@ -38,6 +38,19 @@ def main() -> None:
         '<string name="app_name">FlClash</string>',
         '<string name="app_name">FlClash Side</string>',
     )
+    # This independently installed Android flavor starts without the first-run
+    # disclaimer screen. Leave the statement accessible in Tools, and do not
+    # falsify a persisted user-consent record.
+    replace_exact(
+        root / 'lib/bootstrap.dart',
+        '  Future<bool> _handlerDisclaimer() async {\n'
+        '    final acceptedVersion = _container.read(',
+        '  Future<bool> _handlerDisclaimer() async {\n'
+        '    if (system.isAndroid) {\n'
+        '      return true;\n'
+        '    }\n'
+        '    final acceptedVersion = _container.read(',
+    )
     # Keep namespace, Kotlin packages and `const packageName` unchanged: they
     # identify classes / Dart <-> Kotlin channels, not the installed Android ID.
     print(f'Android applicationId: {ANDROID_ID}')
