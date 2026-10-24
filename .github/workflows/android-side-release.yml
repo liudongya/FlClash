@@ -2,6 +2,12 @@ name: Android side-by-side release
 
 on:
   workflow_dispatch:
+    inputs:
+      rebuild_current:
+        description: 'Rebuild and replace the APK assets in the current release'
+        required: false
+        type: boolean
+        default: false
   push:
     paths:
       - '.github/workflows/android-side-release.yml'
@@ -43,7 +49,7 @@ jobs:
           fi
 
       - name: Check Android signing secrets
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         env:
           KEYSTORE: ${{ secrets.KEYSTORE }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -60,7 +66,7 @@ jobs:
           done
 
       - name: Checkout upstream source
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         uses: actions/checkout@v4
         with:
           repository: chen08209/FlClash
@@ -70,11 +76,11 @@ jobs:
           persist-credentials: false
 
       - name: Patch Android identifier, label and update repository
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         run: python3 recipe/.github/scripts/patch_android_side.py upstream
 
       - name: Read upstream build versions
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         shell: bash
         run: |
           python3 - <<'PY'
@@ -93,14 +99,14 @@ jobs:
           PY
 
       - name: Setup Go
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: upstream/core/go.sum
 
       - name: Setup Flutter
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -108,7 +114,7 @@ jobs:
           cache: true
 
       - name: Setup Android NDK
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         uses: nttld/setup-ndk@v1
         id: ndk
         with:
@@ -117,14 +123,14 @@ jobs:
           link-to-sdk: true
 
       - name: Setup Java
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Restore release signing key
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         working-directory: upstream
         env:
           KEYSTORE: ${{ secrets.KEYSTORE }}
@@ -174,12 +180,12 @@ jobs:
           } >> android/local.properties
 
       - name: Install dependencies
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         working-directory: upstream
         run: flutter pub get
 
       - name: Fetch upstream CA certificates
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         working-directory: upstream
         shell: bash
         run: |
@@ -189,14 +195,14 @@ jobs:
           echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
 
       - name: Build signed ARM64 APK
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         working-directory: upstream
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: dart setup.dart android --targets apk --arch arm64 --env stable -v
 
       - name: Validate APK and prepare checksum
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         working-directory: upstream
         shell: bash
         run: |
@@ -212,15 +218,22 @@ jobs:
           echo "APK_PATH=upstream/$apk" >> "$GITHUB_ENV"
 
       - name: Publish to this fork's Releases
-        if: steps.version.outputs.already_published != 'true'
+        if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" \
-            --target main \
-            --title "FlClash Side $TAG" \
-            --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Update checks point to this fork."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android side-by-side edition; the disclaimer remains available from Tools."
+          else
+            gh release create "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" \
+              --target main \
+              --title "FlClash Side $TAG" \
+              --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android side-by-side edition; the disclaimer remains available from Tools."
+          fi
