@@ -1,0 +1,195 @@
+name: Android side-by-side release
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/android-side-release.yml'
+      - '.github/scripts/patch_android_side.py'
+  schedule:
+    - cron: '43 4 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-side-release
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout build recipe
+        uses: actions/checkout@v4
+        with:
+          path: recipe
+
+      - name: Find latest upstream release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/chen08209/FlClash/releases/latest --jq .tag_name)"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Unexpected stable tag: $tag" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check Android signing secrets
+        if: steps.version.outputs.already_published != 'true'
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for secret in KEYSTORE KEY_ALIAS STORE_PASSWORD KEY_PASSWORD; do
+            if [[ -z "${!secret}" ]]; then
+              echo "Missing secret: $secret. Follow .github/ANDROID_SIDE_README.md" >&2
+              exit 1
+            fi
+          done
+
+      - name: Checkout upstream source
+        if: steps.version.outputs.already_published != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: chen08209/FlClash
+          ref: ${{ steps.version.outputs.tag }}
+          path: upstream
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Patch Android identifier, label and update repository
+        if: steps.version.outputs.already_published != 'true'
+        run: python3 recipe/.github/scripts/patch_android_side.py upstream
+
+      - name: Read upstream build versions
+        if: steps.version.outputs.already_published != 'true'
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          source = Path('upstream/.github/workflows/build.yaml').read_text()
+          lines = []
+          for key in ('FLUTTER_VERSION', 'GO_VERSION', 'NDK_VERSION', 'CA_BUNDLE', 'CA_BUNDLE_SHA256'):
+              match = re.search(r'^\s*' + key + r':\s*[\'"]?([^\'"\s#]+)', source, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f'Missing {key} in upstream build configuration')
+              lines.append(f'{key}={match.group(1)}\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as dest:
+              dest.writelines(lines)
+          PY
+
+      - name: Setup Go
+        if: steps.version.outputs.already_published != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: upstream/core/go.sum
+
+      - name: Setup Flutter
+        if: steps.version.outputs.already_published != 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Android NDK
+        if: steps.version.outputs.already_published != 'true'
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: ${{ env.NDK_VERSION }}
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Setup Java
+        if: steps.version.outputs.already_published != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Restore release signing key
+        if: steps.version.outputs.already_published != 'true'
+        working-directory: upstream
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
+          chmod 600 android/app/keystore.jks
+          {
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } >> android/local.properties
+
+      - name: Install dependencies
+        if: steps.version.outputs.already_published != 'true'
+        working-directory: upstream
+        run: flutter pub get
+
+      - name: Fetch upstream CA certificates
+        if: steps.version.outputs.already_published != 'true'
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
+      - name: Build signed ARM64 APK
+        if: steps.version.outputs.already_published != 'true'
+        working-directory: upstream
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: dart setup.dart android --targets apk --arch arm64 --env stable -v
+
+      - name: Validate APK and prepare checksum
+        if: steps.version.outputs.already_published != 'true'
+        working-directory: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(dist/*.apk)
+          [[ "${#apks[@]}" -eq 1 ]] || { echo "Expected exactly one APK, found ${#apks[@]}" >&2; exit 1; }
+          apk="${apks[0]}"
+          tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$tools/apksigner" verify --verbose "$apk"
+          "$tools/aapt" dump badging "$apk" | grep -F "package: name='app.routelight.mobile'"
+          (cd dist && sha256sum ./*.apk > SHA256SUMS)
+          echo "APK_PATH=upstream/$apk" >> "$GITHUB_ENV"
+
+      - name: Publish to this fork's Releases
+        if: steps.version.outputs.already_published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target main \
+            --title "FlClash Side $TAG" \
+            --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Update checks point to this fork."
