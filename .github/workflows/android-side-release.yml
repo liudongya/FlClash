@@ -229,11 +229,12 @@ jobs:
             gh release upload "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
               --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android side-by-side edition; the disclaimer remains available from Tools."
+              --title "FlClash+ $TAG" \
+              --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android independent edition; the disclaimer remains available from Tools."
           else
             gh release create "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
               --repo "$GITHUB_REPOSITORY" \
               --target main \
-              --title "FlClash Side $TAG" \
-              --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android side-by-side edition; the disclaimer remains available from Tools."
+              --title "FlClash+ $TAG" \
+              --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android independent edition; the disclaimer remains available from Tools."
           fi
