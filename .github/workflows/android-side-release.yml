@@ -215,9 +215,11 @@ jobs:
             exit 1
           fi
 
-      - name: Validate APK and prepare checksum
+      - name: Validate APK and prepare compatible update assets
         if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
         working-directory: upstream
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -228,8 +230,26 @@ jobs:
           tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$tools/apksigner" verify --verbose "$apk"
           "$tools/aapt" dump badging "$apk" | grep -F "package: name='app.routelight.mobile'"
-          (cd dist && sha256sum ./*.apk > SHA256SUMS)
-          echo "APK_PATH=upstream/$apk" >> "$GITHUB_ENV"
+
+          # The 0.9.3 updater expects FlClash-X.Y.Z-android-arm64-v8a.apk
+          # in SHA256SUMS. The 0.9.4+ updater expects the new dev-line
+          # asset and FlClash-dev-X.Y.Z-SHA256SUMS. Keep both compatible,
+          # without disabling hash checks or changing the signing key.
+          version="${TAG#v}"
+          modern="dist/FlClash-dev-${version}-android-arm64.apk"
+          legacy="dist/FlClash-${version}-android-arm64-v8a.apk"
+          if [[ "$apk" != "$modern" ]]; then
+            cp "$apk" "$modern"
+          fi
+          if [[ "$apk" != "$legacy" ]]; then
+            cp "$apk" "$legacy"
+          fi
+          (
+            cd dist
+            sha256sum ./*.apk > SHA256SUMS
+            cp SHA256SUMS "FlClash-dev-${version}-SHA256SUMS"
+          )
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Publish to this fork's Releases
         if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
@@ -239,14 +259,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          assets=(upstream/dist/*.apk upstream/dist/SHA256SUMS "upstream/dist/FlClash-dev-${RELEASE_VERSION}-SHA256SUMS")
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
+            gh release upload "$TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
               --title "FlClash+ $TAG" \
               --notes "Independent Android ARM64 build from upstream $TAG. Application ID: app.routelight.mobile. Checks this fork for updates. First-run disclaimer screen is skipped for the Android independent edition; the disclaimer remains available from Tools."
           else
-            gh release create "$TAG" "$APK_PATH" upstream/dist/SHA256SUMS \
+            gh release create "$TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --target main \
               --title "FlClash+ $TAG" \
