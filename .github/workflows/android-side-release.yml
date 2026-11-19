@@ -200,7 +200,20 @@ jobs:
         working-directory: upstream
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: dart setup.dart android --targets apk --arch arm64 --env stable -v
+          UPSTREAM_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f tool/package.dart ]]; then
+            # Upstream v0.9.4+ packages with tool/package.dart.
+            dart tool/package.dart android --targets apk --arch arm64 --env stable --tag "$UPSTREAM_TAG" -v
+          elif [[ -f setup.dart ]]; then
+            # Keep compatibility with older upstream releases.
+            dart setup.dart android --targets apk --arch arm64 --env stable -v
+          else
+            echo "No supported upstream Android packaging entry point found" >&2
+            exit 1
+          fi
 
       - name: Validate APK and prepare checksum
         if: steps.version.outputs.already_published != 'true' || github.event_name == 'push' || inputs.rebuild_current
